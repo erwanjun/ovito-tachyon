@@ -136,7 +136,7 @@ pip install build
 python -m build                                    # wheel：setup.py 把 vendor/tachyon 编译进包内
 pip install dist/*.whl ovito imageio-ffmpeg pyinstaller pillow
 pyinstaller packaging/ovito-tachyon.spec           # dist/OVITO-Tachyon.app 或 dist/OVITO-Tachyon/
-sh packaging/build_dmg.sh 0.1.0                    # macOS：release/*.dmg
+sh packaging/build_dmg.sh 0.1.1                    # macOS：release/*.dmg
 ```
 
 编译 Tachyon 需要 C 编译器（macOS：Xcode Command Line Tools；Windows：MSVC）。不要在 exFAT 分区上构建。

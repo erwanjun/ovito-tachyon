@@ -1,4 +1,4 @@
-; Inno Setup script for the Windows x64 installer.  iscc /DAppVersion=0.1.0 packaging\installer.iss
+; Inno Setup script for the Windows x64 installer.  iscc /DAppVersion=0.1.1 packaging\installer.iss
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
