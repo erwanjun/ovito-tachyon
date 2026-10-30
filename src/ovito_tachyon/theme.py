@@ -124,6 +124,9 @@ QScrollBar::handle:vertical {{ background: {t['border']}; border-radius: 4px; mi
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 QToolTip {{ background: {t['primary']}; color: {t['primary_fg']}; border: none; padding: 4px 8px; border-radius: 6px; }}
 QMenuBar {{ background: {t['background']}; }}
+QFrame#Popover {{ background: {t['card']}; border: 1px solid {t['border']}; border-radius: 8px; }}
+QPushButton#Link {{ border: none; background: transparent; padding: 0; min-height: 0; color: {t['muted_fg']}; }}
+QPushButton#Link:hover {{ color: {t['foreground']}; text-decoration: underline; }}
 QMenu {{ background: {t['card']}; border: 1px solid {t['border']}; border-radius: 6px; padding: 4px; }}
 QMenu::item {{ padding: 6px 12px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {t['accent']}; }}

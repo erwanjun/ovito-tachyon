@@ -87,3 +87,25 @@ def test_parallel_export_matches_serial(tmp_path):
     serial = [(out[1] / f"frame_{i:05d}.png").read_bytes() for i in range(len(frames))]
     assert serial == [(out[3] / f"frame_{i:05d}.png").read_bytes() for i in range(len(frames))]
     assert serial[0] != serial[-1]
+
+
+def test_read_session_types(tmp_path):
+    from ovito_tachyon.session import read_particle_types
+
+    pipeline = _pipeline()
+    pipeline.add_to_scene()
+    try:
+        ovito.scene.save(str(tmp_path / "s.ovito"))
+    finally:
+        pipeline.remove_from_scene()
+    types = read_particle_types(tmp_path / "s.ovito")
+    assert types[1] == ("A", (1.0, 0.0, 0.0), 0.5)
+    assert types[2] == ("B", (0.0, 0.0, 1.0), None)
+
+
+def test_read_session_rejects_other_files(tmp_path):
+    from ovito_tachyon.session import SessionFormatError, read_particle_types
+
+    (tmp_path / "x.ovito").write_bytes(b"not an ovito file" * 10)
+    with pytest.raises(SessionFormatError):
+        read_particle_types(tmp_path / "x.ovito")

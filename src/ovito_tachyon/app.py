@@ -36,6 +36,10 @@ VIEWS = [
     ("Right", "Ortho", (-1.0, 0.0, 0.0)),
 ]
 
+# OVITO's default type colors, a few element colors and neutrals.
+PALETTE = ["#ff6666", "#6666ff", "#ffff00", "#ff66ff", "#66ff33", "#ff9933", "#33cccc", "#996633",
+           "#909090", "#ff0d0d", "#3050f8", "#f0c8a0", "#80d1e3", "#ffffff", "#737373", "#0a0a0a"]
+
 FORMATS = [("PNG", "png"), ("Sequence", "sequence"), ("GIF", "gif"), ("MP4", "mp4")]
 FORMAT_SUFFIX = {"png": ".png", "sequence": "", "gif": ".gif", "mp4": ".mp4"}
 
@@ -58,10 +62,10 @@ class TypeStyle:
             return
         types = data.particles_.particle_types_
         for t in types.types:
-            if t.id in self.colors:
-                types.make_mutable(t).color = self.colors[t.id]
-            if t.id in self.radii:
-                types.make_mutable(t).radius = self.radii[t.id]
+            if t.id in self.colors or t.id in self.radii:
+                t = types.make_mutable(t)
+                t.color = self.colors.get(t.id, t.color)
+                t.radius = self.radii.get(t.id, t.radius)
 
 
 def scan_types(pipeline) -> dict[int, tuple]:
@@ -250,6 +254,30 @@ class ToggleGroup(QtWidgets.QWidget):
             self.buttons.append(b)
 
 
+def color_hex(rgb) -> str:
+    return "#" + "".join(f"{round(255 * min(max(c, 0.0), 1.0)):02x}" for c in rgb[:3])
+
+
+def parse_color(text: str):
+    """``#rgb``, ``#rrggbb`` (``#`` optional), or ``r, g, b`` in 0-255 (in 0-1 when all are <= 1). None if invalid."""
+    text = text.strip()
+    digits = text.lstrip("#")
+    if len(digits) in (3, 6) and all(c in "0123456789abcdefABCDEF" for c in digits):
+        if len(digits) == 3:
+            digits = "".join(c * 2 for c in digits)
+        return tuple(int(digits[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    parts = text.replace(",", " ").split()
+    if len(parts) == 3:
+        try:
+            values = [float(p) for p in parts]
+        except ValueError:
+            return None
+        scale = 1.0 if all(v <= 1.0 for v in values) else 255.0
+        if all(0 <= v <= scale for v in values):
+            return tuple(v / scale for v in values)
+    return None
+
+
 def _exclusive(method):
     """OVITO evaluations (compute, zoom_all, rendering) spin a nested event loop, and starting another one from an
     event handled inside it crashes OVITO. Decorated methods never overlap: a call made while one runs is retried."""
@@ -266,6 +294,70 @@ def _exclusive(method):
             self._busy = False
 
     return wrapper
+
+
+class ColorPopup(QtWidgets.QFrame):
+    """Popover under a swatch: type a color code, or click a palette swatch. Valid input applies as you type."""
+
+    picked = QtCore.Signal(tuple)
+
+    def __init__(self, rgb, palette, parent):
+        super().__init__(parent, QtCore.Qt.Popup)
+        self.setObjectName("Popover")
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.rgb = tuple(rgb)
+        v = QtWidgets.QVBoxLayout(self)
+        v.setContentsMargins(10, 10, 10, 10)
+        v.setSpacing(8)
+        self.code = QtWidgets.QLineEdit(color_hex(rgb))
+        self.code.setPlaceholderText("#rrggbb")
+        self.code.textEdited.connect(self._typed)
+        self.code.returnPressed.connect(self.close)
+        v.addWidget(self.code)
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(6)
+        for i, code in enumerate(palette):
+            swatch = QtWidgets.QPushButton()
+            swatch.setObjectName("Swatch")
+            swatch.setToolTip(code)
+            swatch.setStyleSheet(f"background-color: {code};")
+            swatch.clicked.connect(lambda _=False, c=code: self._choose(parse_color(c)))
+            grid.addWidget(swatch, i // 8, i % 8)
+        v.addLayout(grid)
+        more = QtWidgets.QPushButton(tr("More…"))
+        more.clicked.connect(self._system_dialog)
+        v.addWidget(more)
+
+    def show_below(self, widget):
+        self.adjustSize()
+        pos = widget.mapToGlobal(QtCore.QPoint(widget.width() - self.width(), widget.height() + 4))
+        screen = widget.screen().availableGeometry()
+        pos.setX(max(screen.left(), min(pos.x(), screen.right() - self.width())))
+        if pos.y() + self.height() > screen.bottom():
+            pos.setY(widget.mapToGlobal(QtCore.QPoint(0, -self.height() - 4)).y())
+        self.move(pos)
+        self.show()
+        self.code.setFocus()
+        self.code.selectAll()
+
+    def _typed(self, text):
+        rgb = parse_color(text)
+        if rgb:
+            self.rgb = rgb
+            self.picked.emit(rgb)
+
+    def _choose(self, rgb):
+        self.picked.emit(rgb)
+        self.close()
+
+    def _system_dialog(self):
+        start = QtGui.QColor.fromRgbF(*self.rgb)
+        parent = self.parentWidget()
+        self.close()
+        color = QtWidgets.QColorDialog.getColor(start, parent)
+        if color.isValid():
+            self.picked.emit((color.redF(), color.greenF(), color.blueF()))
 
 
 class PanFilter(QtCore.QObject):
@@ -484,7 +576,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
         section = _section("")
         self._bind(section.setText, "Atoms")
-        v.addWidget(section)
+        import_button = QtWidgets.QPushButton()
+        import_button.setObjectName("Link")
+        self._bind(import_button.setText, "From .ovito…")
+        import_button.clicked.connect(lambda: self.import_ovito_types())
+        header = QtWidgets.QHBoxLayout()
+        header.addWidget(section)
+        header.addStretch(1)
+        header.addWidget(import_button, 0, QtCore.Qt.AlignBottom)
+        v.addLayout(header)
         self.types_box = QtWidgets.QVBoxLayout()
         self.types_box.setSpacing(6)
         v.addLayout(self.types_box)
@@ -617,7 +717,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def dropEvent(self, event):
         urls = event.mimeData().urls()
         if urls:
-            self.open_file(urls[0].toLocalFile())
+            path = urls[0].toLocalFile()
+            if path.lower().endswith(".ovito"):
+                self.import_ovito_types(path)
+            else:
+                self.open_file(path)
 
     def choose_file(self):
         start = self.settings.value("last_dir", str(Path.home()))
@@ -758,24 +862,62 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @staticmethod
     def _paint_swatch(button, color):
-        r, g, b = (int(round(255 * c)) for c in color[:3])
-        button.setStyleSheet(f"background-color: rgb({r},{g},{b});")
-        button.setProperty("rgb", (r / 255, g / 255, b / 255))
+        code = color_hex(color)
+        button.setStyleSheet(f"background-color: {code};")
+        button.setToolTip(code)
+        button.setProperty("rgb", tuple(float(c) for c in color[:3]))
 
-    def _pick_color(self, button):
-        r, g, b = button.property("rgb")
-        col = QtWidgets.QColorDialog.getColor(QtGui.QColor.fromRgbF(r, g, b), self)
-        if not col.isValid():
-            return None
-        rgb = (col.redF(), col.greenF(), col.blueF())
-        self._paint_swatch(button, rgb)
-        return rgb
+    def _palette(self) -> list[str]:
+        imported = self.settings.value("ovito_palette") or []
+        imported = [c for c in ([imported] if isinstance(imported, str) else imported) if parse_color(c)]
+        return list(dict.fromkeys(imported + PALETTE))[:24]
+
+    def _pick_color(self, button, apply):
+        popup = ColorPopup(button.property("rgb"), self._palette(), self)
+        popup.picked.connect(lambda rgb: (self._paint_swatch(button, rgb), apply(rgb)))
+        popup.show_below(button)
 
     def _choose_type_color(self, tid, button):
-        rgb = self._pick_color(button)
-        if rgb:
+        def apply(rgb):
             self.type_style.colors[tid] = rgb
             self._refresh_pipeline()
+
+        self._pick_color(button, apply)
+
+    def import_ovito_types(self, path=None):
+        """Take type colors and radii from an OVITO session file, matching types by name, then by id."""
+        from .session import SessionFormatError, read_particle_types
+
+        if path is None:
+            start = self.settings.value("last_dir", str(Path.home()))
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, tr("From .ovito…"), start, "OVITO (*.ovito)")
+            if not path:
+                return
+        try:
+            found = read_particle_types(path)
+        except (OSError, SessionFormatError) as exc:
+            QtWidgets.QMessageBox.warning(self, APP_NAME, f"{Path(path).name}\n\n{exc}")
+            return
+        codes = list(dict.fromkeys(color_hex(color) for _, color, _ in found.values()))
+        self.settings.setValue("ovito_palette", codes[:8])
+        by_name = {name.lower(): entry for name, *entry in found.values() if name}
+        matched = 0
+        for tid, (name, _, _) in self.types.items():
+            entry = by_name.get((name or "").lower())
+            if entry is None and tid in found:
+                entry = found[tid][1:]
+            if entry is None:
+                continue
+            color, radius = entry
+            self.type_style.colors[tid] = color
+            if radius:
+                self.type_style.radii[tid] = radius
+            matched += 1
+        if self.types and not matched:
+            QtWidgets.QMessageBox.information(self, APP_NAME, tr("No atom types match {name}.", name=Path(path).name))
+            return
+        self._populate_types(self.types)
+        self._refresh_pipeline()
 
     def _set_type_visible(self, tid, on: bool):
         if on:
@@ -800,10 +942,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pipeline.source.data.cell_.vis.enabled = on
 
     def _choose_background(self):
-        rgb = self._pick_color(self.bg_button)
-        if rgb:
+        def apply(rgb):
             self.background = rgb
             self.scene.render_settings.background_color = rgb
+
+        self._pick_color(self.bg_button, apply)
 
     # ------------------------------------------------------------ output
     def _fmt(self) -> str:
