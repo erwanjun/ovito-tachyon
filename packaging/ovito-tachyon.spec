@@ -19,6 +19,7 @@ for package in ("ovito", "imageio_ffmpeg"):
 # The bundled ray tracer is an executable, not a module: ship it as a binary next to the package.
 exe_name = "tachyon.exe" if sys.platform == "win32" else "tachyon"
 binaries.append((str(Path(ovito_tachyon.__file__).parent / "bin" / exe_name), "ovito_tachyon/bin"))
+datas.append((str(Path(ovito_tachyon.__file__).parent / "assets"), "ovito_tachyon/assets"))
 hiddenimports += ["ovito_tachyon.app"]
 
 a = Analysis(

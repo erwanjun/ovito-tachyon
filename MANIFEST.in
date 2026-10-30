@@ -1,4 +1,5 @@
 include LICENSE README.md setup.py
+recursive-include src/ovito_tachyon/assets *.svg
 recursive-include vendor/tachyon *.c *.h COPYRIGHT README
 recursive-include tests *.py
 recursive-include examples *.py

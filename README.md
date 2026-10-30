@@ -1,124 +1,150 @@
-# ovito-tachyon
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo.svg" width="88" alt="">
+  </picture>
+  <br><br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.svg">
+    <img src="docs/wordmark.svg" width="360" alt="ovito-tachyon">
+  </picture>
+</p>
 
-![OVITO-Tachyon](docs/screenshot.png)
+<p align="center">
+  用 Tachyon 光线追踪渲染分子动力学轨迹：打开、旋转、导出 PNG · GIF · MP4
+</p>
 
-用独立编译的 [Tachyon](https://github.com/erwanjun/ovito-tachyon/tree/main/vendor/tachyon) 光线追踪器渲染分子动力学轨迹：
-桌面软件可以直接打开 LAMMPS 等轨迹文件，自由旋转视角，导出 PNG、图片序列、GIF 或 MP4；
-同时也是一个可以在 OVITO Python 脚本里调用的渲染库。
+<p align="center">
+  <a href="https://github.com/erwanjun/ovito-tachyon/releases/latest"><img src="https://img.shields.io/github/v/release/erwanjun/ovito-tachyon?style=flat-square&color=171717&label=release" alt="Release"></a>
+  <img src="https://img.shields.io/badge/macOS-Apple%20silicon-171717?style=flat-square&logo=apple" alt="macOS">
+  <img src="https://img.shields.io/badge/Windows-x64-171717?style=flat-square&logo=windows" alt="Windows">
+  <img src="https://img.shields.io/badge/python-3.9%2B-171717?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-171717?style=flat-square" alt="MIT"></a>
+</p>
 
-## 桌面软件
+<p align="center">
+  <a href="#下载">下载</a> ·
+  <a href="#功能">功能</a> ·
+  <a href="#使用">使用</a> ·
+  <a href="#python-库">Python 库</a> ·
+  <a href="#从源码构建">构建</a>
+</p>
 
-在 [Releases](https://github.com/erwanjun/ovito-tachyon/releases) 下载：
+<br>
 
-| 系统 | 文件 |
+<p align="center">
+  <img src="docs/screenshot.png" width="900" alt="OVITO-Tachyon">
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center"><img src="docs/demo.gif" height="320" alt="刻蚀过程 · 透视 · GIF"></td>
+    <td align="center"><img src="docs/top.png" height="320" alt="最后一帧 · 顶视 · PNG"></td>
+  </tr>
+</table>
+
+## 下载
+
+| 系统 | 安装包 |
 |---|---|
-| macOS（Apple 芯片） | `OVITO-Tachyon-<版本>-macOS-arm64.dmg`，打开后拖进“应用程序” |
-| Windows 10/11 x64 | `OVITO-Tachyon-<版本>-Windows-x64-setup.exe`，或免安装的 `…-portable.zip` |
+| macOS 12+ · Apple 芯片 | [`OVITO-Tachyon-macOS-arm64.dmg`](https://github.com/erwanjun/ovito-tachyon/releases/latest) |
+| Windows 10 / 11 · x64 | [`OVITO-Tachyon-Windows-x64-setup.exe`](https://github.com/erwanjun/ovito-tachyon/releases/latest) · 免安装 `portable.zip` |
 
-安装包没有付费代码签名，第一次打开时系统会拦一下：
+安装包未做付费代码签名，第一次打开会被系统拦一下：
 
-- macOS：在“应用程序”里右键点 OVITO-Tachyon → 打开 → 打开。仍被拦时运行
-  `xattr -dr com.apple.quarantine /Applications/OVITO-Tachyon.app`。
-- Windows：SmartScreen 提示时点“更多信息” → “仍要运行”。
+- **macOS**　在“应用程序”里右键 OVITO-Tachyon →“打开”。仍被拦时运行
+  `xattr -dr com.apple.quarantine /Applications/OVITO-Tachyon.app`
+- **Windows**　SmartScreen 提示时点“更多信息”→“仍要运行”
 
-用法：打开轨迹文件（或直接拖进窗口）→ 在视口里拖动旋转、右键/中键拖动平移、滚轮缩放，
-或点右侧的视角按钮 → 选择格式、分辨率、帧范围和帧率 → Export。视口里的白色区域就是导出画面的范围。
-支持 OVITO 能读取的所有格式（LAMMPS dump/data、XYZ、POSCAR、PDB、GSD 等）。
+## 功能
+
+- **读取**　OVITO 支持的所有格式：LAMMPS dump / data、XYZ、POSCAR、PDB、GSD……几百 MB 的轨迹秒开
+- **视角**　鼠标自由旋转、平移、缩放，或一键切到透视 / 正交 / 六个方向的正视图
+- **外观**　按原子类型显示或隐藏、改颜色和半径；模拟盒开关；背景色
+- **渲染**　内置 Tachyon 光线追踪，环境光遮蔽与阴影，默认效果与 OVITO 自带的 TachyonRenderer 一致
+- **导出**　PNG、PNG 序列、GIF、MP4（H.264），自选分辨率（720p 到 4K）、帧范围、间隔和帧率
+- **界面**　中文 / English，跟随系统浅色与深色模式
+
+## 使用
+
+1. 打开轨迹文件，或直接拖进窗口
+2. 调好视角：视口中的白色区域就是导出画面
+3. 在右侧选择格式、尺寸、帧范围与帧率
+4. 点“预览”看当前帧的渲染效果，点“导出”生成文件
+
+语言在菜单 **Language / 语言** 中切换。
 
 ## Python 库
+
+桌面软件背后的渲染器也可以在 OVITO 脚本里直接使用：
 
 ```bash
 pip install ovito ovito-tachyon
 ```
 
-wheel 内置 Tachyon 可执行文件，`pip install` 后即可使用，无需另外安装渲染器。
-
-### 用法
-
 ```python
 from ovito.io import import_file
 from ovito.vis import Viewport
 from ovito_tachyon import TachyonExporter
+from ovito_tachyon.export import export, frame_list
 
 pipeline = import_file("dump.lammpstrj")
 pipeline.add_to_scene()
 
 vp = Viewport(type=Viewport.Type.Perspective, camera_dir=(-1, -0.6, -0.5))
-vp.zoom_all(size=(1600, 1200))
+vp.zoom_all(size=(1920, 1080))
 
-TachyonExporter(ambient_occlusion_samples=16).render(
-    "out.png", viewport=vp, size=(1600, 1200), frame=0)
+exporter = TachyonExporter(ambient_occlusion_samples=16)
+exporter.render("frame.png", viewport=vp, size=(1920, 1080), frame=0)
+export(exporter, "movie.mp4", "mp4", frame_list(0, 500, 5), viewport=vp, size=(1920, 1080), fps=24)
 ```
 
-参数名与 `ovito.vis.TachyonRenderer` 保持一致：`antialiasing`、`antialiasing_samples`、
+<details>
+<summary>参数与支持范围</summary>
+
+<br>
+
+`TachyonExporter` 的参数与 `ovito.vis.TachyonRenderer` 同名：`antialiasing`、`antialiasing_samples`、
 `ambient_occlusion`、`ambient_occlusion_brightness`、`ambient_occlusion_samples`、`direct_light`、
-`direct_light_intensity`、`shadows`、`depth_of_field`、`focal_length`、`aperture`、`max_ray_recursion`。
-另外还有 `material=Material(...)`（漫反射/高光等）和 `threads`。
+`direct_light_intensity`、`shadows`、`depth_of_field`、`focal_length`、`aperture`、`max_ray_recursion`，
+另有 `material=Material(...)` 与 `threads`。默认光照逐像素拟合过 OVITO 的 TachyonRenderer；
+想更亮可用 `Material(ambient=0.4)`，加高光用 `Material(phong=0.3)`。
 
-默认光照逐像素拟合了 OVITO 自带 TachyonRenderer 的默认效果，两者的差异在采样噪声范围内。
-想更亮时调高环境光，例如 `Material(ambient=0.4)`；`Material(phong=0.3)` 可加上高光。
-
-`render()` 的参数：
-
-| 参数 | 说明 |
+| `render()` 参数 | 说明 |
 |---|---|
-| `filename` | `.png` 或 `.ppm`；为 `None` 时只返回数组 |
-| `viewport` | `ovito.vis.Viewport`；省略时使用 (-1,-1,-1) 方向透视并自动缩放 |
-| `pipelines` | 默认 `ovito.scene.pipelines`；也可以直接传入一个或多个 Pipeline |
+| `filename` | `.png` / `.ppm`；为 `None` 时只返回 `(高, 宽, 3)` 的 `uint8` 数组 |
+| `viewport` | `ovito.vis.Viewport`；省略时用 (-1,-1,-1) 方向透视并自动缩放 |
+| `pipelines` | 默认 `ovito.scene.pipelines`，也可传入一个或多个 Pipeline |
 | `zoom_all` | 按渲染几何体重新调整相机距离（无 viewport 时默认开启） |
-| `scene_file` | 另存生成的 Tachyon 场景文件 `.dat`，便于调试或手工修改 |
+| `scene_file` | 另存生成的 Tachyon 场景文件 `.dat` |
 
-返回值是 `(高, 宽, 3)` 的 `uint8` numpy 数组。批量出图可用
-`exporter.render_animation("frames/img_{:04d}.png", range(0, 100, 5), viewport=vp, size=(800, 600))`。
+支持：球形粒子（半径按 `Radius` → 类型半径 → `ParticlesVis.radius`，颜色按 `Color` → 类型颜色，
+`Transparency`，选中粒子显示为红色）、键（半键着色、`Color` / `Transparency`、跨周期边界）、
+模拟盒、透视 / 正交相机与景深。
+暂不支持：表面网格、位错线、非球形粒子（按球形渲染）、周期性镜像、视口叠加层、透明背景。
 
-### 命令行
+命令行：`ovito-tachyon dump.lammpstrj -o out.png --size 1600 1200 --view top --frame -1`
 
-```bash
-ovito-tachyon dump.lammpstrj -o out.png --size 1600 1200 --view top --frame -1
-ovito-tachyon --which        # 显示正在使用的 tachyon 可执行文件
-```
+Tachyon 可执行文件的查找顺序：环境变量 `OVITO_TACHYON_EXE` → 包内 `ovito_tachyon/bin/` → `PATH` 中的 `tachyon`。
 
-### 支持的内容
+</details>
 
-- 粒子：球形；半径按 `Radius` 属性 → 类型半径 → `ParticlesVis.radius` 的顺序取值，并乘以缩放系数；
-  颜色按 `Color` → 类型颜色取值；`Transparency` 属性生效；被选中的粒子显示为红色
-- 键：半键着色（`BondsVis.coloring_mode` / 旧版 `use_particle_colors`）、键的 `Color` 和 `Transparency` 属性、跨周期边界的键
-- 模拟晶胞：`line_width`、`rendering_color`、`render_cell`
-- 相机：透视/正交，与 OVITO 的 `fov` 定义一致；支持景深
-
-暂不支持：表面网格（SurfaceMesh）、位错线、非球形粒子（按球形渲染并给出警告）、
-周期性镜像、视口叠加层（文字、色标）、透明背景。
-
-### 可执行文件的查找顺序
-
-1. 环境变量 `OVITO_TACHYON_EXE`
-2. 包内 `ovito_tachyon/bin/tachyon`
-3. `PATH` 中的 `tachyon`（例如 `conda install -c conda-forge tachyon`）
-
-## 构建与发布
+## 从源码构建
 
 ```bash
 pip install build
-python -m build            # dist/ 下生成 sdist 和当前平台的 wheel
-```
-
-构建 wheel 时，`setup.py` 会用系统 C 编译器把 `vendor/tachyon` 编译进包内（macOS 需要 Xcode
-Command Line Tools，Linux 需要 gcc，Windows 需要 MSVC）。wheel 的标签是 `py3-none-<平台>`，
-同一平台的所有 Python 3 版本通用。仓库不能放在 exFAT 分区上构建（会报找不到 egg-info）。
-
-桌面软件：
-
-```bash
+python -m build                                    # wheel：setup.py 把 vendor/tachyon 编译进包内
 pip install dist/*.whl ovito imageio-ffmpeg pyinstaller pillow
-pyinstaller packaging/ovito-tachyon.spec      # dist/OVITO-Tachyon.app 或 dist/OVITO-Tachyon/
-sh packaging/build_dmg.sh 0.1.0               # macOS：release/*.dmg
+pyinstaller packaging/ovito-tachyon.spec           # dist/OVITO-Tachyon.app 或 dist/OVITO-Tachyon/
+sh packaging/build_dmg.sh 0.1.0                    # macOS：release/*.dmg
 ```
 
-推送 `v*` tag 后，`.github/workflows/release.yml` 会在 GitHub Actions 上构建 macOS arm64 的 dmg 和
-Windows x64 的安装包及免安装 zip，先在打包好的程序里跑一遍 `--selftest`（渲染并编码 GIF/MP4），
-再发布到 Releases。`wheels.yml` 可手动触发，用 cibuildwheel 构建各平台的 Python wheel。
+编译 Tachyon 需要 C 编译器（macOS：Xcode Command Line Tools；Windows：MSVC）。不要在 exFAT 分区上构建。
+推送 `v*` tag 后，[`release.yml`](.github/workflows/release.yml) 会在 GitHub Actions 上构建 dmg、
+Windows 安装包与免安装 zip，在打包好的程序里跑一遍 `--selftest`，再发布到 Releases。
 
-## 许可
+## 许可与致谢
 
-本包代码使用 MIT 许可；随附的 Tachyon 0.99b6（John E. Stone）使用 BSD 3-clause 许可，见 `LICENSE`。
-桌面软件还打包了 OVITO Python 模块（MIT）、Qt for Python / PySide6（LGPLv3）和 imageio-ffmpeg 提供的 FFmpeg（GPL）。
+本项目代码使用 MIT 许可。随附的 [Tachyon](vendor/tachyon) 0.99b6（John E. Stone）使用 BSD 3-clause 许可，见 [`LICENSE`](LICENSE)。
+桌面软件还打包了 [OVITO](https://www.ovito.org) Python 模块（MIT）、Qt for Python / PySide6（LGPLv3）与
+imageio-ffmpeg 提供的 [FFmpeg](https://ffmpeg.org)（GPL）。界面配色取自 [shadcn/ui](https://ui.shadcn.com)（MIT）。

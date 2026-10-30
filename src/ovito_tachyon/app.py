@@ -10,8 +10,10 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
+from .i18n import LANGUAGES, language, set_language, tr
 
 APP_NAME = "OVITO-Tachyon"
+ASSETS = Path(__file__).resolve().parent / "assets"
 
 SIZE_PRESETS = [
     ("720p", 1280, 720),
@@ -38,14 +40,20 @@ FORMAT_SUFFIX = {"png": ".png", "sequence": "", "gif": ".gif", "mp4": ".mp4"}
 
 
 class TypeStyle:
-    """Per-type colour/radius overrides applied by a pipeline modifier, so they hold in every frame."""
+    """Per-type colour/radius/visibility overrides applied by a pipeline modifier, so they hold in every frame."""
 
     def __init__(self):
         self.colors: dict[int, tuple] = {}
         self.radii: dict[int, float] = {}
+        self.hidden: set[int] = set()
 
     def __call__(self, frame, data):
-        if data.particles is None or data.particles.particle_types is None or not (self.colors or self.radii):
+        if data.particles is None or data.particles.particle_types is None:
+            return
+        if self.hidden:
+            ids = np.asarray(data.particles.particle_types)
+            data.particles_.delete_elements(np.isin(ids, list(self.hidden)))
+        if not (self.colors or self.radii):
             return
         types = data.particles_.particle_types_
         for t in types.types:
@@ -64,7 +72,7 @@ def scan_types(pipeline) -> dict[int, tuple]:
         if data.particles is None or data.particles.particle_types is None:
             continue
         for t in data.particles.particle_types.types:
-            found.setdefault(t.id, (t.name or f"Type {t.id}", tuple(t.color), float(t.radius)))
+            found.setdefault(t.id, (t.name, tuple(t.color), float(t.radius)))
     return dict(sorted(found.items()))
 
 
@@ -76,7 +84,7 @@ def main(argv=None) -> int:
         print(f"{APP_NAME} {__version__}")
         return 0
 
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 
     from .theme import stylesheet
 
@@ -84,16 +92,23 @@ def main(argv=None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ovito-tachyon")
     app.setStyle("Fusion")
+    app.setWindowIcon(QtGui.QIcon(_svg_pixmap("logo", "#0a0a0a", 256)))
     icon_dir = Path(tempfile.gettempdir()) / "ovito-tachyon-icons"
+
+    settings = QtCore.QSettings()
+    default = "zh" if QtCore.QLocale.system().language() == QtCore.QLocale.Chinese else "en"
+    set_language(str(settings.value("language", default)))
+    _install_qt_translator(app)
+
+    window = MainWindow()
 
     def apply_theme(*_):
         dark = app.styleHints().colorScheme() == QtCore.Qt.ColorScheme.Dark
         app.setStyleSheet(stylesheet(dark, icon_dir))
+        window.set_dark(dark)
 
     apply_theme()
     app.styleHints().colorSchemeChanged.connect(apply_theme)
-
-    window = MainWindow()
     window.show()
     if argv and not argv[0].startswith("-"):
         window.open_file(argv[0])
@@ -132,7 +147,37 @@ def selftest(out_dir: str) -> int:
 
 
 # --------------------------------------------------------------------------- GUI
-from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtGui, QtSvg, QtWidgets  # noqa: E402
+
+_qt_translator = None
+
+
+def _install_qt_translator(app) -> None:
+    """Load Qt's own translations (standard buttons, colour and file dialogs) for the current language."""
+    global _qt_translator
+    if _qt_translator is not None:
+        app.removeTranslator(_qt_translator)
+        _qt_translator = None
+    if language() == "zh":
+        translator = QtCore.QTranslator(app)
+        path = QtCore.QLibraryInfo.path(QtCore.QLibraryInfo.TranslationsPath)
+        if translator.load(QtCore.QLocale(QtCore.QLocale.Chinese, QtCore.QLocale.China), "qtbase", "_", path):
+            app.installTranslator(translator)
+            _qt_translator = translator
+
+
+def _svg_pixmap(name: str, color: str, height: int, ratio: float = 2.0) -> QtGui.QPixmap:
+    svg = (ASSETS / f"{name}.svg").read_text(encoding="utf-8").replace('fill="#000000"', f'fill="{color}"')
+    renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode()))
+    size = renderer.defaultSize()
+    w = round(height * size.width() / size.height())
+    pixmap = QtGui.QPixmap(round(w * ratio), round(height * ratio))
+    pixmap.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    pixmap.setDevicePixelRatio(ratio)
+    return pixmap
 
 
 def _section(text: str) -> QtWidgets.QLabel:
@@ -154,7 +199,7 @@ def _spin(lo, hi, value, double=False, step=None):
 class ToggleGroup(QtWidgets.QWidget):
     """shadcn-style segmented control."""
 
-    def __init__(self, labels, columns=None, exclusive=True):
+    def __init__(self, count, columns=None):
         super().__init__()
         self.setObjectName("ToggleGroup")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
@@ -162,11 +207,10 @@ class ToggleGroup(QtWidgets.QWidget):
         grid.setContentsMargins(3, 3, 3, 3)
         grid.setSpacing(2)
         self.group = QtWidgets.QButtonGroup(self)
-        self.group.setExclusive(exclusive)
-        columns = columns or len(labels)
+        columns = columns or count
         self.buttons = []
-        for i, label in enumerate(labels):
-            b = QtWidgets.QPushButton(label)
+        for i in range(count):
+            b = QtWidgets.QPushButton()
             b.setObjectName("Toggle")
             b.setCheckable(True)
             self.group.addButton(b, i)
@@ -189,7 +233,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pipeline = None
         self.input_path: Path | None = None
         self.type_style = TypeStyle()
+        self.types: dict[int, tuple] = {}
         self.background = (1.0, 1.0, 1.0)
+        self.dark = False
+        self._texts: list[tuple] = []
 
         self.vp = Viewport(type=Viewport.Type.Perspective, camera_dir=VIEWS[0][2])
         self.vp.preview_mode = True
@@ -203,6 +250,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_size()
         self._set_loaded(False)
 
+    # ------------------------------------------------------------ i18n
+    def _bind(self, setter, key, **kwargs):
+        """Set a translated text now and again whenever the language changes."""
+        self._texts.append((setter, key, kwargs))
+        setter(tr(key, **kwargs))
+
+    def set_language(self, lang: str):
+        set_language(lang)
+        self.settings.setValue("language", lang)
+        _install_qt_translator(QtWidgets.QApplication.instance())
+        for setter, key, kwargs in self._texts:
+            setter(tr(key, **kwargs))
+        for action in self.language_actions.actions():
+            action.setChecked(action.data() == lang)
+        self._populate_types(self.types)
+        self._set_frame(self.frame_slider.value())
+
+    def set_dark(self, dark: bool):
+        self.dark = dark
+        color = "#fafafa" if dark else "#0a0a0a"
+        self.logo_label.setPixmap(_svg_pixmap("logo", color, 72))
+        self.wordmark_label.setPixmap(_svg_pixmap("wordmark", color, 30))
+
     # ------------------------------------------------------------ layout
     def _build(self):
         root = QtWidgets.QWidget()
@@ -213,16 +283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         left = QtWidgets.QVBoxLayout()
         left.setSpacing(0)
         self.stack = QtWidgets.QStackedWidget()
-        empty = QtWidgets.QWidget()
-        e = QtWidgets.QVBoxLayout(empty)
-        open_big = QtWidgets.QPushButton("Open trajectory")
-        open_big.setObjectName("Primary")
-        open_big.setMinimumWidth(180)
-        open_big.clicked.connect(self.choose_file)
-        e.addStretch(1)
-        e.addWidget(open_big, 0, QtCore.Qt.AlignCenter)
-        e.addStretch(1)
-        self.stack.addWidget(empty)
+        self.stack.addWidget(self._empty_state())
         self.stack.addWidget(self.vp_window.widget)
         left.addWidget(self.stack, 1)
         left.addWidget(self._bottom_bar())
@@ -230,11 +291,44 @@ class MainWindow(QtWidgets.QMainWindow):
         h.addWidget(self._sidebar())
         self.setCentralWidget(root)
 
-        menu = self.menuBar().addMenu("File")
-        menu.addAction("Open…", QtGui.QKeySequence.Open, self.choose_file)
-        menu.addAction("Export", QtGui.QKeySequence("Ctrl+E"), self.run_export)
+        menu = self.menuBar().addMenu("")
+        self._bind(menu.setTitle, "File")
+        for key, shortcut, slot in (("Open…", QtGui.QKeySequence.Open, self.choose_file),
+                                    ("Export", QtGui.QKeySequence("Ctrl+E"), self.run_export)):
+            action = menu.addAction("", shortcut, slot)
+            self._bind(action.setText, key)
         menu.addSeparator()
-        menu.addAction("Quit", QtGui.QKeySequence.Quit, self.close)
+        quit_action = menu.addAction("", QtGui.QKeySequence.Quit, self.close)
+        self._bind(quit_action.setText, "Quit")
+
+        lang_menu = self.menuBar().addMenu("Language / 语言")
+        self.language_actions = QtGui.QActionGroup(self)
+        for code, name in LANGUAGES.items():
+            action = lang_menu.addAction(name)
+            action.setCheckable(True)
+            action.setData(code)
+            action.setChecked(code == language())
+            action.triggered.connect(lambda _=False, c=code: self.set_language(c))
+            self.language_actions.addAction(action)
+
+    def _empty_state(self):
+        empty = QtWidgets.QWidget()
+        e = QtWidgets.QVBoxLayout(empty)
+        e.setSpacing(18)
+        self.logo_label = QtWidgets.QLabel()
+        self.wordmark_label = QtWidgets.QLabel()
+        open_big = QtWidgets.QPushButton()
+        self._bind(open_big.setText, "Open trajectory")
+        open_big.setObjectName("Primary")
+        open_big.setMinimumWidth(180)
+        open_big.clicked.connect(self.choose_file)
+        e.addStretch(1)
+        e.addWidget(self.logo_label, 0, QtCore.Qt.AlignCenter)
+        e.addWidget(self.wordmark_label, 0, QtCore.Qt.AlignCenter)
+        e.addSpacing(10)
+        e.addWidget(open_big, 0, QtCore.Qt.AlignCenter)
+        e.addStretch(1)
+        return empty
 
     def _bottom_bar(self):
         bar = QtWidgets.QWidget()
@@ -255,12 +349,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_slider.valueChanged.connect(self._set_frame)
         self.step_label = QtWidgets.QLabel()
         self.step_label.setObjectName("Muted")
-        self.step_label.setMinimumWidth(110)
+        self.step_label.setMinimumWidth(130)
         lay.addWidget(self.play_button)
         lay.addWidget(self.frame_slider, 1)
         lay.addWidget(self.frame_spin)
         lay.addWidget(self.step_label)
         return bar
+
+    def _label(self, key):
+        label = QtWidgets.QLabel()
+        self._bind(label.setText, key)
+        return label
 
     def _sidebar(self):
         body = QtWidgets.QWidget()
@@ -269,27 +368,36 @@ class MainWindow(QtWidgets.QMainWindow):
         v.setContentsMargins(16, 12, 16, 16)
         v.setSpacing(8)
 
-        self.file_button = QtWidgets.QPushButton("Open…")
+        self.file_button = QtWidgets.QPushButton()
+        self._file_text = ("Open…", {})
+        self._bind(self._set_file_text, "Open…")
         self.file_button.clicked.connect(self.choose_file)
         v.addWidget(self.file_button)
 
-        v.addWidget(_section("View"))
-        self.view_group = ToggleGroup([label for label, _, _ in VIEWS], columns=4)
+        section = _section("")
+        self._bind(section.setText, "View")
+        v.addWidget(section)
+        self.view_group = ToggleGroup(len(VIEWS), columns=4)
+        for button, (key, _, _) in zip(self.view_group.buttons, VIEWS):
+            self._bind(button.setText, key)
         self.view_group.buttons[0].setChecked(True)
         self.view_group.group.idClicked.connect(lambda i: self.set_view(*VIEWS[i][1:]))
-        fit = QtWidgets.QPushButton("Fit")
+        fit = QtWidgets.QPushButton()
+        self._bind(fit.setText, "Fit")
         fit.clicked.connect(self.zoom_all)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(self.view_group, 1)
         row.addWidget(fit, 0, QtCore.Qt.AlignTop)
         v.addLayout(row)
 
-        v.addWidget(_section("Atoms"))
+        section = _section("")
+        self._bind(section.setText, "Atoms")
+        v.addWidget(section)
         self.types_box = QtWidgets.QVBoxLayout()
         self.types_box.setSpacing(6)
         v.addLayout(self.types_box)
-        scene_form = QtWidgets.QFormLayout()
-        self.cell_check = QtWidgets.QCheckBox("Cell")
+        self.cell_check = QtWidgets.QCheckBox()
+        self._bind(self.cell_check.setText, "Box")
         self.cell_check.setChecked(True)
         self.cell_check.toggled.connect(self._apply_cell_visibility)
         self.bg_button = QtWidgets.QPushButton()
@@ -299,12 +407,13 @@ class MainWindow(QtWidgets.QMainWindow):
         bg_row = QtWidgets.QHBoxLayout()
         bg_row.addWidget(self.cell_check)
         bg_row.addStretch(1)
-        bg_row.addWidget(QtWidgets.QLabel("Background"))
+        bg_row.addWidget(self._label("Background"))
         bg_row.addWidget(self.bg_button)
-        scene_form.addRow(bg_row)
-        v.addLayout(scene_form)
+        v.addLayout(bg_row)
 
-        v.addWidget(_section("Render"))
+        section = _section("")
+        self._bind(section.setText, "Render")
+        v.addWidget(section)
         form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignLeft)
         self.aa_spin = _spin(0, 64, 12)
@@ -318,14 +427,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shadow_check = QtWidgets.QCheckBox()
         self.shadow_check.setChecked(True)
         self.brightness_spin = _spin(0.0, 1.0, 0.3, double=True, step=0.05)
-        form.addRow("Antialiasing", self.aa_spin)
-        form.addRow("Ambient occlusion", ao_row)
-        form.addRow("Shadows", self.shadow_check)
-        form.addRow("Brightness", self.brightness_spin)
+        form.addRow(self._label("Antialiasing"), self.aa_spin)
+        form.addRow(self._label("Ambient occlusion"), ao_row)
+        form.addRow(self._label("Shadows"), self.shadow_check)
+        form.addRow(self._label("Brightness"), self.brightness_spin)
         v.addLayout(form)
 
-        v.addWidget(_section("Output"))
-        self.format_group = ToggleGroup([label for label, _ in FORMATS])
+        section = _section("")
+        self._bind(section.setText, "Output")
+        v.addWidget(section)
+        self.format_group = ToggleGroup(len(FORMATS))
+        for button, (key, _) in zip(self.format_group.buttons, FORMATS):
+            self._bind(button.setText, key)
         self.format_group.buttons[3].setChecked(True)
         self.format_group.group.idClicked.connect(self._format_changed)
         v.addWidget(self.format_group)
@@ -333,8 +446,9 @@ class MainWindow(QtWidgets.QMainWindow):
         out = QtWidgets.QFormLayout()
         out.setLabelAlignment(QtCore.Qt.AlignLeft)
         self.size_combo = QtWidgets.QComboBox()
-        for label, w, hgt in SIZE_PRESETS:
-            self.size_combo.addItem(label, (w, hgt))
+        for i, (key, w, hgt) in enumerate(SIZE_PRESETS):
+            self.size_combo.addItem("", (w, hgt))
+            self._bind(lambda text, i=i: self.size_combo.setItemText(i, text), key)
         self.size_combo.currentIndexChanged.connect(self._preset_selected)
         self.width_spin = _spin(16, 8192, 1280, step=2)
         self.height_spin = _spin(16, 8192, 720, step=2)
@@ -345,12 +459,13 @@ class MainWindow(QtWidgets.QMainWindow):
         size_row.addWidget(self.width_spin)
         size_row.addWidget(QtWidgets.QLabel("×"))
         size_row.addWidget(self.height_spin)
-        out.addRow("Size", size_row)
+        out.addRow(self._label("Size"), size_row)
 
         self.first_spin = _spin(0, 0, 0)
         self.last_spin = _spin(0, 0, 0)
         self.stride_spin = _spin(1, 100000, 1)
-        self.stride_spin.setPrefix("every ")
+        self._bind(self.stride_spin.setPrefix, "@stride_prefix")
+        self._bind(self.stride_spin.setSuffix, "@stride_suffix")
         frames_row = QtWidgets.QHBoxLayout()
         frames_row.addWidget(self.first_spin)
         dash = QtWidgets.QLabel("–")
@@ -358,12 +473,12 @@ class MainWindow(QtWidgets.QMainWindow):
         frames_row.addWidget(dash)
         frames_row.addWidget(self.last_spin)
         frames_row.addWidget(self.stride_spin)
-        self.frames_label = QtWidgets.QLabel("Frames")
+        self.frames_label = self._label("Frames")
         out.addRow(self.frames_label, frames_row)
         self.fps_spin = _spin(0.5, 120.0, 20.0, double=True)
         self.fps_spin.setDecimals(1)
         self.fps_spin.setSuffix(" fps")
-        self.fps_label = QtWidgets.QLabel("Rate")
+        self.fps_label = self._label("Rate")
         out.addRow(self.fps_label, self.fps_spin)
 
         self.out_edit = QtWidgets.QLineEdit()
@@ -373,12 +488,14 @@ class MainWindow(QtWidgets.QMainWindow):
         path_row = QtWidgets.QHBoxLayout()
         path_row.addWidget(self.out_edit, 1)
         path_row.addWidget(browse)
-        out.addRow("Save to", path_row)
+        out.addRow(self._label("Save to"), path_row)
         v.addLayout(out)
 
-        self.preview_button = QtWidgets.QPushButton("Preview")
+        self.preview_button = QtWidgets.QPushButton()
+        self._bind(self.preview_button.setText, "Preview")
         self.preview_button.clicked.connect(self.render_preview)
-        self.export_button = QtWidgets.QPushButton("Export")
+        self.export_button = QtWidgets.QPushButton()
+        self._bind(self.export_button.setText, "Export")
         self.export_button.setObjectName("Primary")
         self.export_button.clicked.connect(self.run_export)
         buttons = QtWidgets.QHBoxLayout()
@@ -396,6 +513,10 @@ class MainWindow(QtWidgets.QMainWindow):
         scroll.setFixedWidth(380)
         return scroll
 
+    def _set_file_text(self, text):
+        # Once a file is loaded the button shows its name, which needs no translation.
+        self.file_button.setText(self.input_path.name if self.input_path else text)
+
     # ------------------------------------------------------------ file
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -408,7 +529,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def choose_file(self):
         start = self.settings.value("last_dir", str(Path.home()))
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open", start)
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, tr("Open…"), start)
         if path:
             self.open_file(path)
 
@@ -443,7 +564,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.last_spin.setValue(last)
             self.frame_slider.setValue(0)
             self._set_frame(0)
-            self._populate_types(scan_types(pipeline))
+            self.types = scan_types(pipeline)
+            self._populate_types(self.types)
             self._apply_cell_visibility(self.cell_check.isChecked())
             self.file_button.setText(path.name)
             self.file_button.setToolTip(str(path))
@@ -468,7 +590,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.scene.anim.current_frame = int(frame)
         timestep = self.pipeline.compute(int(frame)).attributes.get("Timestep")
-        self.step_label.setText("" if timestep is None else f"step {timestep}")
+        self.step_label.setText("" if timestep is None else tr("step {n}", n=timestep))
 
     def _toggle_play(self, on: bool):
         self.play_button.setText("❚❚" if on else "▶")
@@ -502,18 +624,24 @@ class MainWindow(QtWidgets.QMainWindow):
                     if w:
                         w.deleteLater()
         for tid, (name, color, radius) in types.items():
+            color = self.type_style.colors.get(tid, color)
+            radius = self.type_style.radii.get(tid, radius)
             row = QtWidgets.QHBoxLayout()
+            visible = QtWidgets.QCheckBox()
+            visible.setChecked(tid not in self.type_style.hidden)
+            visible.toggled.connect(lambda on, t=tid: self._set_type_visible(t, on))
             swatch = QtWidgets.QPushButton()
             swatch.setObjectName("Swatch")
             self._paint_swatch(swatch, color)
             swatch.clicked.connect(lambda _=False, t=tid, b=swatch: self._choose_type_color(t, b))
             radius_spin = _spin(0.0, 10.0, radius, double=True, step=0.1)
-            radius_spin.setSpecialValueText("auto")
+            radius_spin.setSpecialValueText(tr("auto"))
             radius_spin.setPrefix("r ")
             radius_spin.setFixedWidth(90)
             radius_spin.valueChanged.connect(lambda val, t=tid: self._set_type_radius(t, val))
+            row.addWidget(visible)
             row.addWidget(swatch)
-            row.addWidget(QtWidgets.QLabel(name), 1)
+            row.addWidget(QtWidgets.QLabel(name or tr("@type", id=tid)), 1)
             row.addWidget(radius_spin)
             self.types_box.addLayout(row)
 
@@ -537,6 +665,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if rgb:
             self.type_style.colors[tid] = rgb
             self._refresh_pipeline()
+
+    def _set_type_visible(self, tid, on: bool):
+        if on:
+            self.type_style.hidden.discard(tid)
+        else:
+            self.type_style.hidden.add(tid)
+        self._refresh_pipeline()
 
     def _set_type_radius(self, tid, value):
         if value > 0:
@@ -614,9 +749,9 @@ class MainWindow(QtWidgets.QMainWindow):
         fmt = self._fmt()
         current = self.out_edit.text() or str(Path.home())
         if fmt == "sequence":
-            path = QtWidgets.QFileDialog.getExistingDirectory(self, "Save to", current)
+            path = QtWidgets.QFileDialog.getExistingDirectory(self, tr("Save to"), current)
         else:
-            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save to", current, f"*{FORMAT_SUFFIX[fmt]}")
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, tr("Save to"), current, f"*{FORMAT_SUFFIX[fmt]}")
             if path and not path.lower().endswith(FORMAT_SUFFIX[fmt]):
                 path += FORMAT_SUFFIX[fmt]
         if path:
@@ -663,23 +798,26 @@ class MainWindow(QtWidgets.QMainWindow):
             if not out:
                 return
         if Path(out).exists() and fmt != "sequence":
-            answer = QtWidgets.QMessageBox.question(self, APP_NAME, f"Replace {Path(out).name}?")
+            answer = QtWidgets.QMessageBox.question(self, APP_NAME, tr("Replace {name}?", name=Path(out).name))
             if answer != QtWidgets.QMessageBox.Yes:
                 return
         frames = [self.frame_slider.value()] if fmt == "png" else self._frames()
 
         self.play_button.setChecked(False)
-        dialog = QtWidgets.QProgressDialog("", "Cancel", 0, len(frames), self)
-        dialog.setWindowTitle("Export")
+        dialog = QtWidgets.QProgressDialog("", tr("Cancel"), 0, len(frames), self)
+        dialog.setWindowTitle(tr("Export"))
         dialog.setWindowModality(QtCore.Qt.WindowModal)
         dialog.setMinimumDuration(0)
         dialog.setMinimumWidth(420)
         dialog.setValue(0)
 
-        def progress(done, total, message):
+        def progress(done, total, _message):
             dialog.setMaximum(total)
             dialog.setValue(done)
-            dialog.setLabelText(message)
+            if done < len(frames):
+                dialog.setLabelText(tr("Frame {frame}  ·  {i} / {n}", frame=frames[done], i=done + 1, n=len(frames)))
+            elif fmt in ("gif", "mp4") and done < total:
+                dialog.setLabelText(tr("Encoding {fmt}", fmt=fmt.upper()))
             QtWidgets.QApplication.processEvents()
             return not dialog.wasCanceled()
 
@@ -697,7 +835,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle(APP_NAME)
         box.setText(str(path))
-        reveal = box.addButton("Show in folder", QtWidgets.QMessageBox.ActionRole)
+        reveal = box.addButton(tr("Show in folder"), QtWidgets.QMessageBox.ActionRole)
         box.addButton(QtWidgets.QMessageBox.Ok)
         box.exec()
         if box.clickedButton() is reveal:
@@ -720,9 +858,9 @@ class PreviewDialog(QtWidgets.QDialog):
         label.setPixmap(QtGui.QPixmap.fromImage(qimg).scaled(
             min(w, int(screen.width() * 0.8)), min(h, int(screen.height() * 0.8)),
             QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
-        save = QtWidgets.QPushButton("Save…")
+        save = QtWidgets.QPushButton(tr("Save…"))
         save.clicked.connect(self._save)
-        close = QtWidgets.QPushButton("Close")
+        close = QtWidgets.QPushButton(tr("Close"))
         close.setObjectName("Primary")
         close.clicked.connect(self.accept)
         buttons = QtWidgets.QHBoxLayout()
@@ -736,7 +874,7 @@ class PreviewDialog(QtWidgets.QDialog):
     def _save(self):
         from .image import write_png
 
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save", str(Path.home() / "render.png"), "*.png")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, tr("Save…"), str(Path.home() / "render.png"), "*.png")
         if path:
             write_png(path if path.lower().endswith(".png") else path + ".png", self.image)
 

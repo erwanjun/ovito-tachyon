@@ -34,6 +34,9 @@ ovito-tachyon-gui = "ovito_tachyon.app:main"
 package-dir = { "" = "src" }
 packages = ["ovito_tachyon"]
 
+[tool.setuptools.package-data]
+ovito_tachyon = ["assets/*.svg"]
+
 [tool.cibuildwheel]
 # The wheel holds an executable, not an extension module: one build per platform is enough.
 build = "cp312-*"

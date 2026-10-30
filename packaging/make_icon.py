@@ -1,38 +1,30 @@
-"""Render packaging/icon.png (1024x1024) with the bundled Tachyon. Run once; the PNG is committed."""
+"""Render packaging/icon.png (1024x1024) from the logo symbol. Run once; the PNG is committed."""
 
 from pathlib import Path
 
-import numpy as np
-from PIL import Image, ImageDraw
-
-from ovito_tachyon import Material, TachyonScene
-from ovito_tachyon._binary import run_tachyon
-from ovito_tachyon.image import read_ppm
+from PySide6 import QtCore, QtGui, QtSvg
 
 HERE = Path(__file__).resolve().parent
+LOGO = HERE.parent / "src" / "ovito_tachyon" / "assets" / "logo.svg"
 SIZE = 1024
+TILE = 824  # macOS icon grid: 824 px rounded square on a 1024 px canvas
+RADIUS = 185
+GLYPH = 520
 
-scene = TachyonScene(SIZE, SIZE, background=(0.09, 0.09, 0.09))
-scene.set_camera((0, -9, 0), (0, 1, 0), (0, 0, 1), np.radians(30), antialiasing_samples=16)
-scene.add_directional_light((0.4, 1.0, -0.6), 0.9)
-scene.set_shading(ambient_occlusion=(32, 0.8, 0.2))
-spheres = [((-0.9, 0, -0.55), 1.0, (0.40, 0.40, 1.00)), ((0.95, 0.3, -0.45), 0.9, (1.00, 0.40, 0.40)),
-           ((0.05, -0.4, 0.95), 0.75, (1.00, 0.85, 0.10))]
-for center, radius, color in spheres:
-    scene.add_spheres([center], radius, color, material=Material(ambient=0.3, phong=0.4))
-scene.write(HERE / "icon.dat")
-run_tachyon(HERE / "icon.dat", HERE / "icon.ppm")
-img = Image.fromarray(read_ppm(HERE / "icon.ppm")).convert("RGBA")
-(HERE / "icon.dat").unlink()
-(HERE / "icon.ppm").unlink()
+app = QtGui.QGuiApplication([])
+svg = LOGO.read_text(encoding="utf-8").replace('fill="#000000"', 'fill="#fafafa"')
+renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode()))
 
-# macOS-style rounded square with a transparent margin
-mask = Image.new("L", (SIZE, SIZE), 0)
-pad = 100
-ImageDraw.Draw(mask).rounded_rectangle((pad, pad, SIZE - pad, SIZE - pad), radius=185, fill=255)
-inner = img.resize((SIZE - 2 * pad, SIZE - 2 * pad), Image.LANCZOS)
-out = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-out.paste(inner, (pad, pad))
-out.putalpha(mask)
-out.save(HERE / "icon.png")
+image = QtGui.QImage(SIZE, SIZE, QtGui.QImage.Format_ARGB32_Premultiplied)
+image.fill(QtCore.Qt.transparent)
+painter = QtGui.QPainter(image)
+painter.setRenderHint(QtGui.QPainter.Antialiasing)
+offset = (SIZE - TILE) / 2
+painter.setPen(QtCore.Qt.NoPen)
+painter.setBrush(QtGui.QColor("#0a0a0a"))
+painter.drawRoundedRect(QtCore.QRectF(offset, offset, TILE, TILE), RADIUS, RADIUS)
+g = (SIZE - GLYPH) / 2
+renderer.render(painter, QtCore.QRectF(g, g, GLYPH, GLYPH))
+painter.end()
+image.save(str(HERE / "icon.png"))
 print(HERE / "icon.png")
