@@ -36,9 +36,10 @@ VIEWS = [
     ("Right", "Ortho", (-1.0, 0.0, 0.0)),
 ]
 
-# OVITO's default type colors, a few element colors and neutrals.
-PALETTE = ["#ff6666", "#6666ff", "#ffff00", "#ff66ff", "#66ff33", "#ff9933", "#33cccc", "#996633",
-           "#909090", "#ff0d0d", "#3050f8", "#f0c8a0", "#80d1e3", "#ffffff", "#737373", "#0a0a0a"]
+# First row: type colors from the author's own OVITO sessions (C, Ar, O, O, C_defect, H, OVITO's C) and white;
+# second row: OVITO's default colors for numbered types, then neutrals.
+PALETTE = ["#848385", "#0a6daf", "#8fc542", "#a72061", "#ac5326", "#f5cf48", "#909090", "#ffffff",
+           "#ff6666", "#6666ff", "#ffff00", "#ff66ff", "#66ff33", "#ff9933", "#737373", "#0a0a0a"]
 
 FORMATS = [("PNG", "png"), ("Sequence", "sequence"), ("GIF", "gif"), ("MP4", "mp4")]
 FORMAT_SUFFIX = {"png": ".png", "sequence": "", "gif": ".gif", "mp4": ".mp4"}
