@@ -23,6 +23,8 @@ _ZH = {
     "Left": "左视",
     "Right": "右视",
     "Fit": "适配",
+    "Rotate": "旋转",
+    "Pan": "平移",
     "Atoms": "原子",
     "@type": "类型 {id}",
     "auto": "自动",

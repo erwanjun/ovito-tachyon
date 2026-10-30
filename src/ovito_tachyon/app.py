@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import sys
 import tempfile
 import traceback
@@ -230,6 +231,53 @@ class ToggleGroup(QtWidgets.QWidget):
             self.buttons.append(b)
 
 
+def _exclusive(method):
+    """OVITO evaluations (compute, zoom_all, rendering) spin a nested event loop, and starting another one from an
+    event handled inside it crashes OVITO. Decorated methods never overlap: a call made while one runs is retried."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args):
+        if self._busy:
+            QtCore.QTimer.singleShot(50, lambda: wrapper(self, *args))
+            return None
+        self._busy = True
+        try:
+            return method(self, *args)
+        finally:
+            self._busy = False
+
+    return wrapper
+
+
+class PanFilter(QtCore.QObject):
+    """In pan mode, turns left-drags in the OVITO viewport into middle-drags, which OVITO treats as panning."""
+
+    _MOUSE = (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseMove,
+              QtCore.QEvent.MouseButtonRelease, QtCore.QEvent.MouseButtonDblClick)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.enabled = False
+        self.windows = set()
+
+    def attach(self, window):
+        if window is not None and window not in self.windows:
+            window.installEventFilter(self)
+            self.windows.add(window)
+
+    def eventFilter(self, obj, event):
+        if not self.enabled or event.type() not in self._MOUSE:
+            return False
+        left, middle = QtCore.Qt.LeftButton, QtCore.Qt.MiddleButton
+        if event.button() != left and not event.buttons() & left:
+            return False
+        button = middle if event.button() == left else event.button()
+        buttons = (event.buttons() & ~left) | middle if event.buttons() & left else event.buttons()
+        QtCore.QCoreApplication.sendEvent(obj, QtGui.QMouseEvent(
+            event.type(), event.position(), event.globalPosition(), button, buttons, event.modifiers()))
+        return True
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -256,6 +304,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.play_timer = QtCore.QTimer(self)
         self.play_timer.timeout.connect(self._advance_frame)
+        # Frame changes only set the animation frame; the timestep label follows once the slider settles.
+        self._busy = False
+        self.step_timer = QtCore.QTimer(self)
+        self.step_timer.setSingleShot(True)
+        self.step_timer.setInterval(120)
+        self.step_timer.timeout.connect(self._update_step)
+        self.pan_filter = PanFilter(self)
 
         self._build()
         self._format_changed()
@@ -306,7 +361,7 @@ class MainWindow(QtWidgets.QMainWindow):
         menu = self.menuBar().addMenu("")
         self._bind(menu.setTitle, "File")
         for key, shortcut, slot in (("Open…", QtGui.QKeySequence.Open, self.choose_file),
-                                    ("Export", QtGui.QKeySequence("Ctrl+E"), self.run_export)):
+                                    ("Export", QtGui.QKeySequence("Ctrl+E"), lambda: self.run_export())):
             action = menu.addAction("", shortcut, slot)
             self._bind(action.setText, key)
         menu.addSeparator()
@@ -396,11 +451,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_group.group.idClicked.connect(lambda i: self.set_view(*VIEWS[i][1:]))
         fit = QtWidgets.QPushButton()
         self._bind(fit.setText, "Fit")
-        fit.clicked.connect(self.zoom_all)
+        fit.clicked.connect(lambda: self.zoom_all())
         row = QtWidgets.QHBoxLayout()
         row.addWidget(self.view_group, 1)
         row.addWidget(fit, 0, QtCore.Qt.AlignTop)
         v.addLayout(row)
+        self.drag_group = ToggleGroup(2)
+        for button, key in zip(self.drag_group.buttons, ("Rotate", "Pan")):
+            self._bind(button.setText, key)
+        self.drag_group.buttons[0].setChecked(True)
+        self.drag_group.group.idClicked.connect(self._set_drag_mode)
+        v.addWidget(self.drag_group)
 
         section = _section("")
         self._bind(section.setText, "Atoms")
@@ -505,11 +566,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.preview_button = QtWidgets.QPushButton()
         self._bind(self.preview_button.setText, "Preview")
-        self.preview_button.clicked.connect(self.render_preview)
+        self.preview_button.clicked.connect(lambda: self.render_preview())
         self.export_button = QtWidgets.QPushButton()
         self._bind(self.export_button.setText, "Export")
         self.export_button.setObjectName("Primary")
-        self.export_button.clicked.connect(self.run_export)
+        self.export_button.clicked.connect(lambda: self.run_export())
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.preview_button)
         buttons.addWidget(self.export_button, 1)
@@ -545,6 +606,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if path:
             self.open_file(path)
 
+    @_exclusive
     def open_file(self, path):
         from ovito.io import import_file
         from ovito.modifiers import PythonModifier
@@ -585,9 +647,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.out_edit.clear()
             self._suggest_output()
             self._set_loaded(True)
+            self._attach_pan_filter()
             self.zoom_all()
             # Fit again once the viewport has been laid out and the first frame evaluated.
-            QtCore.QTimer.singleShot(300, self.zoom_all)
+            QtCore.QTimer.singleShot(300, lambda: self.zoom_all())
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
 
@@ -601,8 +664,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.pipeline is None:
             return
         self.scene.anim.current_frame = int(frame)
-        timestep = self.pipeline.compute(int(frame)).attributes.get("Timestep")
+        self.step_timer.start()
+
+    @_exclusive
+    def _update_step(self):
+        if self.pipeline is None:
+            return
+        timestep = self.pipeline.compute(self.frame_slider.value()).attributes.get("Timestep")
         self.step_label.setText("" if timestep is None else tr("step {n}", n=timestep))
+
+    def _attach_pan_filter(self):
+        handle = self.windowHandle()
+        for window in QtGui.QGuiApplication.allWindows():
+            if handle is not None and window.parent() is handle:
+                self.pan_filter.attach(window)
 
     def _toggle_play(self, on: bool):
         self.play_button.setText("❚❚" if on else "▶")
@@ -623,6 +698,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vp.camera_up = (0.0, 0.0, 0.0)
         self.zoom_all()
 
+    def _set_drag_mode(self, index: int):
+        self._attach_pan_filter()
+        self.pan_filter.enabled = index == 1
+
+    @_exclusive
     def zoom_all(self):
         self.vp.zoom_all(size=self._output_size())
 
@@ -782,6 +862,7 @@ class MainWindow(QtWidgets.QMainWindow):
             material=Material(ambient=self.brightness_spin.value()),
         )
 
+    @_exclusive
     def render_preview(self):
         if self.pipeline is None:
             return
@@ -797,6 +878,7 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.restoreOverrideCursor()
         PreviewDialog(image, self).exec()
 
+    @_exclusive
     def run_export(self):
         from .export import ExportCancelled, export
 
