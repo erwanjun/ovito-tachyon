@@ -93,7 +93,7 @@ def main(argv=None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ovito-tachyon")
     app.setStyle("Fusion")
-    app.setWindowIcon(QtGui.QIcon(_svg_pixmap("logo", "#0a0a0a", 256)))
+    app.setWindowIcon(QtGui.QIcon(QtGui.QPixmap.fromImage(app_icon_image(512))))
     icon_dir = Path(tempfile.gettempdir()) / "ovito-tachyon-icons"
 
     settings = QtCore.QSettings()
@@ -191,6 +191,25 @@ def _svg_pixmap(name: str, color: str, height: int, ratio: float = 2.0) -> QtGui
     painter.end()
     pixmap.setDevicePixelRatio(ratio)
     return pixmap
+
+
+def app_icon_image(size: int) -> QtGui.QImage:
+    """The application icon: white logo on a dark rounded tile, laid out on the macOS icon grid."""
+    tile, radius, glyph = size * 824 / 1024, size * 185 / 1024, size * 520 / 1024
+    svg = (ASSETS / "logo.svg").read_text(encoding="utf-8").replace('fill="#000000"', 'fill="#fafafa"')
+    renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode()))
+    image = QtGui.QImage(size, size, QtGui.QImage.Format_ARGB32_Premultiplied)
+    image.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(image)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QColor("#0a0a0a"))
+    offset = (size - tile) / 2
+    painter.drawRoundedRect(QtCore.QRectF(offset, offset, tile, tile), radius, radius)
+    g = (size - glyph) / 2
+    renderer.render(painter, QtCore.QRectF(g, g, glyph, glyph))
+    painter.end()
+    return image
 
 
 def _section(text: str) -> QtWidgets.QLabel:
