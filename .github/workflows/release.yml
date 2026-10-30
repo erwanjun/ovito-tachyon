@@ -1,0 +1,93 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build package
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+          python -m pip install dist/*.whl "ovito>=3.12" imageio-ffmpeg pyinstaller pillow pytest
+      - name: Test
+        run: pytest tests -q
+      - name: Freeze
+        run: |
+          rm -rf dist build
+          pyinstaller --noconfirm packaging/ovito-tachyon.spec
+      - name: Self-test frozen app
+        run: dist/OVITO-Tachyon.app/Contents/MacOS/OVITO-Tachyon --selftest selftest
+      - name: Disk image
+        run: sh packaging/build_dmg.sh "${GITHUB_REF_NAME#v}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: release/*.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build package
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+          python -m pip install dist/*.whl "ovito>=3.12" imageio-ffmpeg pyinstaller pillow pytest
+      - name: Test
+        run: pytest tests -q
+      - name: Freeze
+        shell: bash
+        run: |
+          rm -rf dist build
+          python -c "from PIL import Image; Image.open('packaging/icon.png').save('packaging/icon.ico', sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])"
+          pyinstaller --noconfirm packaging/ovito-tachyon.spec
+      - name: Self-test frozen app
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\OVITO-Tachyon\OVITO-Tachyon.exe -ArgumentList '--selftest','selftest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "selftest exit code $($p.ExitCode)" }
+          if (-not (Test-Path selftest\anim.mp4)) { throw "selftest produced no video" }
+      - name: Installer and portable zip
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if ($version -notmatch '^\d') { $version = "0.0.0-dev" }
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            $env:Path += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+            if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress; $env:Path += ";${env:ProgramFiles(x86)}\Inno Setup 6" }
+          }
+          iscc /DAppVersion=$version packaging\installer.iss
+          Compress-Archive -Path dist\OVITO-Tachyon -DestinationPath "release\OVITO-Tachyon-$version-Windows-x64-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: release/*
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

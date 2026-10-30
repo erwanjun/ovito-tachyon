@@ -1,0 +1,11 @@
+build/
+dist/
+*.egg-info/
+__pycache__/
+src/ovito_tachyon/bin/
+wheelhouse/
+._*
+.DS_Store
+release/
+packaging/icon.ico
+selftest/

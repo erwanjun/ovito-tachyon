@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ovito-tachyon"
+version = "0.1.0"
+description = "Render OVITO pipelines with a bundled standalone Tachyon ray tracer"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT AND BSD-3-Clause" }
+dependencies = ["numpy"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+]
+
+[project.optional-dependencies]
+ovito = ["ovito>=3.8"]
+app = ["ovito>=3.12", "imageio-ffmpeg>=0.5"]
+test = ["pytest"]
+
+[project.scripts]
+ovito-tachyon = "ovito_tachyon.cli:main"
+
+[project.gui-scripts]
+ovito-tachyon-gui = "ovito_tachyon.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["ovito_tachyon"]
+
+[tool.cibuildwheel]
+# The wheel holds an executable, not an extension module: one build per platform is enough.
+build = "cp312-*"
+skip = "*-musllinux_* *-win32 *_i686"
+test-requires = "pytest"
+test-command = "pytest {project}/tests -q"
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
