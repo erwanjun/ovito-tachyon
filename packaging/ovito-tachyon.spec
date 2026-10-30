@@ -1,4 +1,5 @@
 # PyInstaller spec for the desktop app.  Build with:  pyinstaller packaging/ovito-tachyon.spec
+import os
 import sys
 from pathlib import Path
 
@@ -31,7 +32,9 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 icon = str(HERE / "icon.png")
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=APP, console=False, icon=icon)
+# OVT_CONSOLE=1 builds a console variant whose output can be captured (CI diagnostics).
+console = os.environ.get("OVT_CONSOLE") == "1"
+exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name=APP, console=console, icon=icon)
 coll = COLLECT(exe, a.binaries, a.datas, name=APP)
 
 if sys.platform == "darwin":
