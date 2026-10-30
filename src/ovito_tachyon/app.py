@@ -134,15 +134,27 @@ def selftest(out_dir: str) -> int:
         types.add_type_id(1, particles, name="A").color = (1.0, 0.4, 0.4)
         types.add_type_id(2, particles, name="B").color = (0.4, 0.4, 1.0)
 
-    pipeline = Pipeline(source=PythonSource(function=source))
-    exporter = TachyonExporter(antialiasing_samples=2, ambient_occlusion_samples=4)
-    for fmt, name in (("png", "frame.png"), ("gif", "anim.gif"), ("mp4", "anim.mp4")):
-        path = export(exporter, out / name, fmt, frame_list(0, 3), size=(160, 120), pipelines=[pipeline])
-        print(f"{fmt}: {path} ({path.stat().st_size} bytes)")
-    image = exporter.render(None, size=(160, 120), pipelines=[pipeline])
-    if (image > 250).all():
-        print("selftest: rendered image is blank")
-        return 1
+    # Also log to a file: windowed builds have no console to print to.
+    with open(out / "selftest.log", "w", encoding="utf-8") as log:
+        def report(line):
+            print(line)
+            log.write(line + "\n")
+            log.flush()
+
+        try:
+            pipeline = Pipeline(source=PythonSource(function=source))
+            exporter = TachyonExporter(antialiasing_samples=2, ambient_occlusion_samples=4)
+            for fmt, name in (("png", "frame.png"), ("gif", "anim.gif"), ("mp4", "anim.mp4")):
+                path = export(exporter, out / name, fmt, frame_list(0, 3), size=(160, 120), pipelines=[pipeline])
+                report(f"{fmt}: {path} ({path.stat().st_size} bytes)")
+            image = exporter.render(None, size=(160, 120), pipelines=[pipeline])
+        except Exception:
+            report(traceback.format_exc())
+            return 1
+        if (image > 250).all():
+            report("selftest: rendered image is blank")
+            return 1
+        report("selftest: ok")
     return 0
 
 
