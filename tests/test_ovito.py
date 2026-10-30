@@ -62,3 +62,28 @@ def test_render(tmp_path):
     assert img.shape == (90, 120, 3)
     assert (tmp_path / "x.png").stat().st_size > 0
     assert (img < 250).any()
+
+
+def test_parallel_export_matches_serial(tmp_path):
+    try:
+        find_tachyon()
+    except TachyonNotFoundError:
+        pytest.skip("tachyon executable not available")
+    from ovito_tachyon.export import export
+
+    pipeline = _pipeline()
+
+    def move(frame, data):
+        data.particles_.positions_[0] += (0.3 * frame, 0, 0)
+
+    pipeline.modifiers.append(move)
+    # Tachyon's AO noise depends on the thread count, so fix it to compare pixel for pixel.
+    exporter = TachyonExporter(antialiasing_samples=2, ambient_occlusion_samples=4, threads=2)
+    frames = [0, 1, 2, 3, 4]
+    out = {}
+    for jobs in (1, 3):
+        out[jobs] = export(exporter, tmp_path / f"jobs{jobs}", "sequence", frames,
+                           pipelines=[pipeline], size=(80, 60), jobs=jobs)
+    serial = [(out[1] / f"frame_{i:05d}.png").read_bytes() for i in range(len(frames))]
+    assert serial == [(out[3] / f"frame_{i:05d}.png").read_bytes() for i in range(len(frames))]
+    assert serial[0] != serial[-1]

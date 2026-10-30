@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from ._binary import run_tachyon
 from .exporter import TachyonExporter
+from .image import read_ppm, write_png
 
 FORMATS = ("png", "sequence", "gif", "mp4")
 
@@ -19,6 +23,12 @@ ProgressCallback = Callable[[int, int, str], bool]
 
 class ExportCancelled(Exception):
     pass
+
+
+def default_jobs() -> int:
+    """Frames rendered at once. One Tachyon process cannot keep a many-core CPU busy (serial parsing, and on
+    hybrid CPUs the threads on efficiency cores finish last), so larger machines run several, ~4 threads each."""
+    return max(1, min(4, (os.cpu_count() or 1) // 4))
 
 
 def ffmpeg_exe() -> str:
@@ -48,12 +58,14 @@ def export(
     background: Sequence[float] = (1.0, 1.0, 1.0),
     pipelines=None,
     progress: Optional[ProgressCallback] = None,
+    jobs: Optional[int] = None,
 ) -> Path:
     """Render ``frames`` and write them as ``fmt`` (one of :data:`FORMATS`).
 
     For ``"png"`` only the first frame is rendered. For ``"sequence"`` the
     output is a directory that receives ``frame_00000.png`` etc. Returns the
     path written. Raises :class:`ExportCancelled` if ``progress`` returns False.
+    ``jobs`` frames are ray traced concurrently (default: :func:`default_jobs`).
     """
     if fmt not in FORMATS:
         raise ValueError(f"unknown format {fmt!r}")
@@ -84,9 +96,7 @@ def export(
     else:
         target_dir = Path(tempfile.mkdtemp(prefix="ovito_tachyon_frames_"))
     try:
-        for i, frame in enumerate(frames):
-            report(i, f"Frame {frame}  ·  {i + 1} / {len(frames)}")
-            exporter.render(target_dir / f"frame_{i:05d}.png", frame=frame, **render_args)
+        _render_frames(exporter, frames, target_dir, render_args, report, jobs or default_jobs())
         if fmt == "sequence":
             report(len(frames), "Done")
             return output
@@ -98,6 +108,46 @@ def export(
     finally:
         if fmt != "sequence":
             shutil.rmtree(target_dir, ignore_errors=True)
+
+
+def _render_frames(exporter, frames, target_dir, render_args, report, jobs) -> None:
+    """Build scenes on this thread (OVITO is not thread-safe) while up to ``jobs`` Tachyon processes trace them."""
+    threads = exporter.threads or max(1, (os.cpu_count() or 1) // jobs)
+    scenes = Path(tempfile.mkdtemp(prefix="ovito_tachyon_scenes_"))
+
+    def trace(i):
+        dat, ppm = scenes / f"scene_{i:05d}.dat", scenes / f"image_{i:05d}.ppm"
+        run_tachyon(dat, ppm, threads=threads)
+        write_png(target_dir / f"frame_{i:05d}.png", read_ppm(ppm))
+        dat.unlink()
+        ppm.unlink()
+
+    pool = ThreadPoolExecutor(jobs)
+    pending = set()
+    done = 0
+
+    def collect(timeout):
+        # Short timeouts keep the progress callback (and a GUI's event loop) running while frames trace.
+        nonlocal pending, done
+        finished, pending = wait(pending, timeout=timeout, return_when=FIRST_COMPLETED)
+        for future in finished:
+            future.result()
+            done += 1
+        report(done, f"{done} / {len(frames)}")
+
+    try:
+        for i, frame in enumerate(frames):
+            # Keep the next scenes ready, but not the whole trajectory on disk.
+            while len(pending) >= 2 * jobs:
+                collect(0.1)
+            exporter.build_scene(frame=frame, **render_args).write(scenes / f"scene_{i:05d}.dat")
+            pending.add(pool.submit(trace, i))
+            collect(0)
+        while pending:
+            collect(0.1)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+        shutil.rmtree(scenes, ignore_errors=True)
 
 
 def encode(pattern: Path, output: Path, fmt: str, fps: float) -> None:
