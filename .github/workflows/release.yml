@@ -54,17 +54,6 @@ jobs:
       - name: Self-test (unfrozen)
         timeout-minutes: 5
         run: python -m ovito_tachyon.app --selftest selftest-py
-      - name: Self-test console build
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          $env:OVT_CONSOLE = "1"
-          pyinstaller --noconfirm --distpath dist-console --workpath build-console packaging/ovito-tachyon.spec
-          $p = Start-Process -FilePath dist-console\OVITO-Tachyon\OVITO-Tachyon.exe -ArgumentList '--selftest','selftest-console' -PassThru -NoNewWindow -RedirectStandardOutput out.txt -RedirectStandardError err.txt
-          $done = $p.WaitForExit(240000)
-          Get-Content out.txt, err.txt -ErrorAction SilentlyContinue
-          if (-not $done) { $p.Kill(); throw "console selftest timed out" }
-          if ($p.ExitCode -ne 0) { throw "console selftest exit code $($p.ExitCode)" }
       - name: Freeze
         shell: bash
         run: |

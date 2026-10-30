@@ -21,6 +21,8 @@ for package in ("ovito", "imageio_ffmpeg"):
 exe_name = "tachyon.exe" if sys.platform == "win32" else "tachyon"
 binaries.append((str(Path(ovito_tachyon.__file__).parent / "bin" / exe_name), "ovito_tachyon/bin"))
 datas.append((str(Path(ovito_tachyon.__file__).parent / "assets"), "ovito_tachyon/assets"))
+# ovito.qt_compat imports these Qt modules by name at runtime, which PyInstaller cannot see.
+hiddenimports += [f"PySide6.{m}" for m in ("QtCore", "QtGui", "QtWidgets", "QtNetwork", "QtXml", "QtSvg")]
 hiddenimports += ["ovito_tachyon.app"]
 
 a = Analysis(
